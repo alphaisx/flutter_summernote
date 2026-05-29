@@ -52,6 +52,7 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
   final Key _mapKey = UniqueKey();
   final _imagePicker = ImagePicker();
   late bool _hasAttachment;
+  bool _isLoading = true;
 
   late final WebViewController _webViewController;
 
@@ -82,18 +83,31 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
       }
     });
 
-    _webViewController
-        .setNavigationDelegate(NavigationDelegate(onPageFinished: (String url) {
-      if (widget.hint != null) {
-        setHint(widget.hint);
-      } else {
-        setHint('');
-      }
+    _webViewController.setNavigationDelegate(
+      NavigationDelegate(
+        onPageFinished: (String url) {
+          if (widget.hint != null) {
+            setHint(widget.hint);
+          } else {
+            setHint('');
+          }
 
-      if (widget.value != null) {
-        setText(widget.value!);
-      }
-    }));
+          if (widget.value != null) {
+            setText(widget.value!);
+          }
+
+          setState(() {
+            _isLoading = false;
+          });
+        },
+        onWebResourceError: (WebResourceError error) {
+          debugPrint('WebView error: ${error.description}');
+          setState(() {
+            _isLoading = false;
+          });
+        },
+      ),
+    );
 
     final String contentBase64 =
         base64Encode(const Utf8Encoder().convert(_page));
@@ -106,13 +120,16 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
       _webViewController
           .runJavaScript("document.body.style.webkitUserSelect='auto';");
     }
+    if (Platform.isIOS) {
+      _webViewController
+          .runJavaScript("document.body.style.webkitUserSelect='auto';");
+    }
     _webViewController
         .loadRequest(Uri.parse('data:text/html;base64,$contentBase64'));
   }
 
   @override
   void dispose() {
-    // Don't reassign late final variables
     super.dispose();
   }
 
@@ -128,7 +145,18 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
       child: Column(
         children: <Widget>[
           Expanded(
-            child: WebViewWidget(key: _mapKey, controller: _webViewController),
+            child: Stack(
+              children: [
+                WebViewWidget(
+                  key: _mapKey,
+                  controller: _webViewController,
+                ),
+                if (_isLoading)
+                  const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+              ],
+            ),
           ),
           Visibility(
             visible: widget.showBottomToolbar,
@@ -149,8 +177,18 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
       Expanded(
         child: GestureDetector(
           onTap: () async {
-            String data = await getText();
-            Clipboard.setData(ClipboardData(text: data));
+            try {
+              String data = await getText();
+              if (data.isNotEmpty) {
+                await Clipboard.setData(ClipboardData(text: data));
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Copied to clipboard')),
+                );
+              }
+            } catch (e) {
+              debugPrint('Error copying text: $e');
+            }
           },
           child: const Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -160,20 +198,36 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
       Expanded(
         child: GestureDetector(
           onTap: () async {
-            ClipboardData data = await (Clipboard.getData(Clipboard.kTextPlain)
-                as FutureOr<ClipboardData>);
+            try {
+              ClipboardData? data =
+                  await Clipboard.getData(Clipboard.kTextPlain);
 
-            String txtIsi = data.text!
-                .replaceAll("'", '\\"')
-                .replaceAll('"', '\\"')
-                .replaceAll('[', '\\[')
-                .replaceAll(']', '\\]')
-                .replaceAll('\n', '<br/>')
-                .replaceAll('\n\n', '<br/>')
-                .replaceAll('\r', ' ')
-                .replaceAll('\r\n', ' ');
-            String txt = "\$('.note-editable').append( '$txtIsi');";
-            _webViewController.runJavaScript(txt);
+              if (data?.text == null || data!.text!.isEmpty) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Clipboard is empty')),
+                );
+                return;
+              }
+
+              String txtIsi = data.text!
+                  .replaceAll("'", '\\"')
+                  .replaceAll('"', '\\"')
+                  .replaceAll('[', '\\[')
+                  .replaceAll(']', '\\]')
+                  .replaceAll('\n', '<br/>')
+                  .replaceAll('\n\n', '<br/>')
+                  .replaceAll('\r', ' ')
+                  .replaceAll('\r\n', ' ');
+              String txt = "\$('.note-editable').append( '$txtIsi');";
+              await _webViewController.runJavaScript(txt);
+            } catch (e) {
+              debugPrint('Error pasting text: $e');
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Error pasting: $e')),
+              );
+            }
           },
           child: const Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -186,7 +240,6 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
     ];
 
     if (_hasAttachment) {
-      //add attachment widget
       toolbar.insert(
           0,
           Expanded(
@@ -204,56 +257,93 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
 
   /// Call [getText] to get current value from summernote form
   Future<String> getText() async {
-    await _webViewController.runJavaScript(
-      'setTimeout(function(){GetTextSummernote.postMessage(document.'
-      'getElementsByClassName(\'note-editable\')[0].innerHTML)}, 0);',
-    );
-    return text;
+    final Completer<String> completer = Completer<String>();
+
+    try {
+      await _webViewController.runJavaScript(
+        'setTimeout(function(){GetTextSummernote.postMessage(document.'
+        'getElementsByClassName(\'note-editable\')[0].innerHTML)}, 0);',
+      );
+
+      // Give callback a moment to populate text
+      await Future.delayed(const Duration(milliseconds: 100));
+      completer.complete(text);
+    } catch (e) {
+      debugPrint('Error getting text: $e');
+      completer.completeError(e);
+    }
+
+    return completer.future;
   }
 
   /// Call [setText] to set current value in summernote form
   Future<void> setText(String v) async {
-    String txtIsi = v
-        .replaceAll("'", '\\"')
-        .replaceAll('"', '\\"')
-        .replaceAll('[', '\\[')
-        .replaceAll(']', '\\]')
-        .replaceAll('\n', '<br/>')
-        .replaceAll('\n\n', '<br/>')
-        .replaceAll('\r', ' ')
-        .replaceAll('\r\n', ' ');
-    String txt =
-        'document.getElementsByClassName(\'note-editable\')[0].innerHTML'
-        ' = \'$txtIsi\';';
-    _webViewController.runJavaScript(txt);
+    try {
+      String txtIsi = v
+          .replaceAll("'", '\\"')
+          .replaceAll('"', '\\"')
+          .replaceAll('[', '\\[')
+          .replaceAll(']', '\\]')
+          .replaceAll('\n', '<br/>')
+          .replaceAll('\n\n', '<br/>')
+          .replaceAll('\r', ' ')
+          .replaceAll('\r\n', ' ');
+      String txt =
+          'document.getElementsByClassName(\'note-editable\')[0].innerHTML'
+          ' = \'$txtIsi\';';
+      await _webViewController.runJavaScript(txt);
+    } catch (e) {
+      debugPrint('Error setting text: $e');
+    }
   }
 
   /// [setFullContainer] to set full summernote form
-  // void setFullContainer() {
-  //   _webViewController!
-  //       .runJavaScript('\$("#summernote").summernote("fullscreen.toggle");');
-  // }
+  void setFullContainer() {
+    try {
+      _webViewController
+          .runJavaScript('\$("#summernote").summernote("fullscreen.toggle");');
+    } catch (e) {
+      debugPrint('Error toggling fullscreen: $e');
+    }
+  }
 
   /// [setFocus] to focus summernote form
   void setFocus() {
-    _webViewController.runJavaScript("\$('#summernote').summernote('focus');");
+    try {
+      _webViewController
+          .runJavaScript("\$('#summernote').summernote('focus');");
+    } catch (e) {
+      debugPrint('Error focusing editor: $e');
+    }
   }
 
   /// [setEmpty] called to reset summmernote form
   void setEmpty() {
-    _webViewController.runJavaScript("\$('#summernote').summernote('reset');");
+    try {
+      _webViewController
+          .runJavaScript("\$('#summernote').summernote('reset');");
+      setState(() {
+        text = '';
+      });
+    } catch (e) {
+      debugPrint('Error resetting editor: $e');
+    }
   }
 
   /// [setHint] to give placeholder
   void setHint(String? text) {
-    String hint = '\$(".note-placeholder").html("$text");';
-    _webViewController.runJavaScript('setTimeout(function(){$hint}, 0);');
+    try {
+      String hint = '\$(".note-placeholder").html("$text");';
+      _webViewController.runJavaScript('setTimeout(function(){$hint}, 0);');
+    } catch (e) {
+      debugPrint('Error setting hint: $e');
+    }
   }
 
   /// [widgetIcon] to simplify create a button icon with text
-  Widget widgetIcon(IconData icon, String title, {Function? onTap}) {
+  Widget widgetIcon(IconData icon, String title, {VoidCallback? onTap}) {
     return InkWell(
-      onTap: onTap as void Function()?,
+      onTap: onTap,
       child: Row(
         children: <Widget>[
           Icon(
@@ -317,25 +407,7 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
         popover: {$popover},
         callbacks: {
             onInit: function () {
-                \$('.note-editable').attr(
-                    'contenteditable',
-                    'true'
-                );
-
-                \$('.note-editable').on(
-                    'focus',
-                    function () {
-                        document.activeElement.blur();
-                        \$(this).focus();
-                    }
-                );
-
-                \$('.note-editable').on(
-                    'click',
-                    function () {
-                        \$(this).focus();
-                    }
-                );
+                \$('.note-editable').attr('contenteditable', 'true');
             }
         }
     });
@@ -391,8 +463,15 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
               subtitle: const Text('Attach image from camera'),
               onTap: () async {
                 Navigator.pop(context);
-                final image = await _getImage(true);
-                if (image != null) await _addImage(image);
+                try {
+                  final image = await _getImage(true);
+                  if (image != null) await _addImage(image);
+                } catch (e) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error: $e')),
+                  );
+                }
               },
             ),
             ListTile(
@@ -401,8 +480,15 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
               subtitle: const Text('Attach image from gallery'),
               onTap: () async {
                 Navigator.pop(context);
-                final image = await _getImage(false);
-                if (image != null) await _addImage(image);
+                try {
+                  final image = await _getImage(false);
+                  if (image != null) await _addImage(image);
+                } catch (e) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error: $e')),
+                  );
+                }
               },
             ),
           ]);
@@ -411,24 +497,45 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
 
   /// [_getImage] to get image from summernote
   Future<XFile?> _getImage(bool fromCamera) async {
-    final picked = await _imagePicker.pickImage(
-        source: (fromCamera) ? ImageSource.camera : ImageSource.gallery);
-    if (picked != null) {
-      return XFile(picked.path);
-    } else {
+    try {
+      final picked = await _imagePicker.pickImage(
+          source: (fromCamera) ? ImageSource.camera : ImageSource.gallery);
+      if (picked != null) {
+        return XFile(picked.path);
+      }
       return null;
+    } catch (e) {
+      debugPrint('Error picking image: $e');
+      rethrow;
     }
   }
 
   /// [_addImage] to add image in summernote form
   Future<void> _addImage(XFile image) async {
-    String filename = basename(image.path);
-    List<int> imageBytes = await image.readAsBytes();
-    String base64Image =
-        '<img width="${widget.widthImage}" src="data:image/png;base64, '
-        '${base64Encode(imageBytes)}" data-filename="$filename">';
+    try {
+      String filename = basename(image.path);
+      List<int> imageBytes = await image.readAsBytes();
 
-    String txt = "\$('.note-editable').append( '$base64Image');";
-    _webViewController.runJavaScript(txt);
+      // Determine image type
+      String mimeType = 'image/png';
+      if (filename.toLowerCase().endsWith('.jpg') ||
+          filename.toLowerCase().endsWith('.jpeg')) {
+        mimeType = 'image/jpeg';
+      } else if (filename.toLowerCase().endsWith('.gif')) {
+        mimeType = 'image/gif';
+      } else if (filename.toLowerCase().endsWith('.webp')) {
+        mimeType = 'image/webp';
+      }
+
+      String base64Image =
+          '<img width="${widget.widthImage}" src="data:$mimeType;base64,'
+          '${base64Encode(imageBytes)}" data-filename="$filename">';
+
+      String txt = "\$('.note-editable').append( '$base64Image');";
+      await _webViewController.runJavaScript(txt);
+    } catch (e) {
+      debugPrint('Error adding image: $e');
+      rethrow;
+    }
   }
 }
