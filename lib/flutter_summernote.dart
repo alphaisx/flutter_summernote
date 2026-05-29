@@ -53,12 +53,18 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
   final _imagePicker = ImagePicker();
   late bool _hasAttachment;
   bool _isLoading = true;
+  bool _webViewHasFocus = false;
 
   late final WebViewController _webViewController;
+  // Add FocusNode for managing focus
+  late FocusNode _focusNode;
 
   @override
   void initState() {
     super.initState();
+
+    _focusNode = FocusNode(); // Initialize FocusNode
+    _focusNode.addListener(_handleFocusChange); // Listen to focus changes
 
     _page = _initPage(widget.customToolbar, widget.customPopover);
     _hasAttachment = widget.hasAttachment;
@@ -66,6 +72,16 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
     _webViewController = WebViewController();
 
     _webViewController.setJavaScriptMode(JavaScriptMode.unrestricted);
+    // Add JavaScript channel to handle webview focus events
+    _webViewController.addJavaScriptChannel('FocusHandler',
+        onMessageReceived: (JavaScriptMessage message) {
+      if (message.message == 'focused') {
+        setState(() {
+          _webViewHasFocus = true;
+        });
+        _focusNode.requestFocus();
+      }
+    });
     _webViewController.addJavaScriptChannel('GetTextSummernote',
         onMessageReceived: (JavaScriptMessage message) {
       String isi = message.message;
@@ -92,22 +108,17 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
             setHint('');
           }
 
+          setFullContainer();
           if (widget.value != null) {
             setText(widget.value!);
           }
 
-          // Ensure webview can receive focus
-          FocusManager.instance.primaryFocus?.unfocus();
-          debugPrint('webview focusing by alpha');
-          _webViewController
-              .runJavaScript("document.body.style.webkitUserSelect='auto';");
+          // Inject JavaScript to handle focus events
+          _injectFocusHandling();
 
           setState(() {
             _isLoading = false;
           });
-
-          setFullContainer();
-          setFocus();
         },
         onWebResourceError: (WebResourceError error) {
           debugPrint('WebView error: ${error.description}');
@@ -139,44 +150,87 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
 
   @override
   void dispose() {
+    _focusNode.removeListener(_handleFocusChange);
+    _focusNode.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: widget.height ?? MediaQuery.of(context).size.height,
-      decoration: widget.decoration ??
-          BoxDecoration(
-            borderRadius: const BorderRadius.all(Radius.circular(4)),
-            border: Border.all(color: const Color(0xffececec), width: 1),
-          ),
-      child: Column(
-        children: <Widget>[
-          Expanded(
-            child: Stack(
-              children: [
-                WebViewWidget(
-                  key: _mapKey,
-                  controller: _webViewController,
+    return Focus(
+      focusNode: _focusNode,
+      onKeyEvent: (node, event) {
+        // Ensure keyboard input goes to webview
+        if (_webViewHasFocus) {
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: GestureDetector(
+        onTap: () {
+          _focusNode.requestFocus();
+          setFocus();
+        },
+        child: Container(
+          height: widget.height ?? MediaQuery.of(context).size.height,
+          decoration: widget.decoration ??
+              BoxDecoration(
+                borderRadius: const BorderRadius.all(Radius.circular(4)),
+                border: Border.all(color: const Color(0xffececec), width: 1),
+              ),
+          child: Column(
+            children: <Widget>[
+              Expanded(
+                child: Stack(
+                  children: [
+                    WebViewWidget(
+                      key: _mapKey,
+                      controller: _webViewController,
+                    ),
+                    if (_isLoading)
+                      const Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                  ],
                 ),
-                if (_isLoading)
-                  const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-              ],
-            ),
+              ),
+              Visibility(
+                visible: widget.showBottomToolbar,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(children: _generateBottomToolbar(context)),
+                ),
+              )
+            ],
           ),
-          Visibility(
-            visible: widget.showBottomToolbar,
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(children: _generateBottomToolbar(context)),
-            ),
-          )
-        ],
+        ),
       ),
     );
+  }
+
+  /// Handle focus changes from FocusNode
+  void _handleFocusChange() {
+    if (_focusNode.hasFocus) {
+      _webViewHasFocus = true;
+      setFocus();
+    }
+  }
+
+  /// Inject JavaScript to handle webview focus events
+  Future<void> _injectFocusHandling() async {
+    await _webViewController.runJavaScript('''
+      document.addEventListener('focusin', function(e) {
+        if (e.target.closest('.note-editable')) {
+          FocusHandler.postMessage('focused');
+        }
+      });
+      
+      document.addEventListener('focusout', function(e) {
+        if (e.target.closest('.note-editable')) {
+          window._webviewHasFocus = false;
+        }
+      });
+    ''');
   }
 
   /// Method [_generateBottomToolbar] to render bottom toolbar that declared
