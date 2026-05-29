@@ -333,12 +333,12 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
         popover: {$popover},
         callbacks: {
             onInit: function () {
-                $('.note-editable').attr(
+                \$('.note-editable').attr(
                     'contenteditable',
                     'true'
                 );
 
-                $('.note-editable').on(
+                \$('.note-editable').on(
                     'focus',
                     function () {
                         document.activeElement.blur();
@@ -346,7 +346,7 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
                     }
                 );
 
-                $('.note-editable').on(
+                \$('.note-editable').on(
                     'click',
                     function () {
                         $(this).focus();
