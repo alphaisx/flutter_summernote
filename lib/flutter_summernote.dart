@@ -100,7 +100,6 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
         setHint('');
       }
 
-      setFullContainer();
       if (widget.value != null) {
         setText(widget.value!);
       }
@@ -108,6 +107,16 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
 
     final String contentBase64 =
         base64Encode(const Utf8Encoder().convert(_page));
+
+    await _webViewController!.enableZoom(false);
+    await _webViewController!.setBackgroundColor(
+      const Color(0x00000000),
+    );
+    if (Platform.isAndroid) {
+      await _webViewController!.runJavaScript(
+        "document.body.style.webkitUserSelect='auto';"
+      );
+    }
     _webViewController!
         .loadRequest(Uri.parse('data:text/html;base64,$contentBase64'));
   }
@@ -236,10 +245,10 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
   }
 
   /// [setFullContainer] to set full summernote form
-  void setFullContainer() {
-    _webViewController!
-        .runJavaScript('\$("#summernote").summernote("fullscreen.toggle");');
-  }
+  // void setFullContainer() {
+  //   _webViewController!
+  //       .runJavaScript('\$("#summernote").summernote("fullscreen.toggle");');
+  // }
 
   /// [setFocus] to focus summernote form
   void setFocus() {
@@ -315,14 +324,37 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
     <script src="https://cdn.jsdelivr.net/npm/summernote@0.8.18/dist/summernote-bs4.min.js"></script>
     </head>
     <body>
-    <div id="summernote" contenteditable="true"></div>
+    <div id="summernote"></div>
     <script type="text/javascript">
-      \$("#summernote").summernote({
+      \$('#summernote').summernote({
         placeholder: 'Your text here...',
         tabsize: 2,
         toolbar: $toolbar,
-        popover: {$popover}
-      });
+        popover: {$popover},
+        callbacks: {
+            onInit: function () {
+                $('.note-editable').attr(
+                    'contenteditable',
+                    'true'
+                );
+
+                $('.note-editable').on(
+                    'focus',
+                    function () {
+                        document.activeElement.blur();
+                        $(this).focus();
+                    }
+                );
+
+                $('.note-editable').on(
+                    'click',
+                    function () {
+                        $(this).focus();
+                    }
+                );
+            }
+        }
+    });
     </script>
     </body>
     </html>
