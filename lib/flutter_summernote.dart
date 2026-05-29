@@ -53,18 +53,8 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
   final _imagePicker = ImagePicker();
   late bool _hasAttachment;
 
-  late final WebViewController? _webViewController;
-
-  void handleRequest(HttpRequest request) {
-    try {
-      if (request.method == 'GET' &&
-          request.uri.queryParameters['query'] == 'getRawTeXHTML') {
-      } else {}
-    } catch (e) {
-      debugPrint('Exception in handleRequest: $e');
-    }
-  }
-
+  late final WebViewController _webViewController;
+  
   @override
   void initState() {
     super.initState();
@@ -74,8 +64,8 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
 
     _webViewController = WebViewController();
 
-    _webViewController!.setJavaScriptMode(JavaScriptMode.unrestricted);
-    _webViewController!.addJavaScriptChannel('GetTextSummernote',
+    _webViewController.setJavaScriptMode(JavaScriptMode.unrestricted);
+    _webViewController.addJavaScriptChannel('GetTextSummernote',
         onMessageReceived: (JavaScriptMessage message) {
       String isi = message.message;
       if (isi.isEmpty ||
@@ -108,12 +98,12 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
     final String contentBase64 =
         base64Encode(const Utf8Encoder().convert(_page));
 
-    await _webViewController!.enableZoom(false);
-    await _webViewController!.setBackgroundColor(
+    await _webViewController.enableZoom(false);
+    await _webViewController.setBackgroundColor(
       const Color(0x00000000),
     );
     if (Platform.isAndroid) {
-      await _webViewController!.runJavaScript(
+      await _webViewController.runJavaScript(
         "document.body.style.webkitUserSelect='auto';"
       );
     }
@@ -123,9 +113,7 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
 
   @override
   void dispose() {
-    if (_webViewController != null) {
-      _webViewController = null;
-    }
+    // Don't reassign late final variables
     super.dispose();
   }
 
@@ -176,7 +164,7 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
             ClipboardData data = await (Clipboard.getData(Clipboard.kTextPlain)
                 as FutureOr<ClipboardData>);
 
-            String txtIsi = data.text!
+            String txtIsi = data!.text!
                 .replaceAll("'", '\\"')
                 .replaceAll('"', '\\"')
                 .replaceAll('[', '\\[')
@@ -186,7 +174,7 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
                 .replaceAll('\r', ' ')
                 .replaceAll('\r\n', ' ');
             String txt = "\$('.note-editable').append( '$txtIsi');";
-            _webViewController!.runJavaScript(txt);
+            _webViewController.runJavaScript(txt);
           },
           child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -220,13 +208,13 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
 
   /// Call [getText] to get current value from summernote form
   Future<String> getText() async {
-    await _webViewController?.runJavaScript(
+    await _webViewController.runJavaScript(
       'setTimeout(function(){GetTextSummernote.postMessage(document.'
       'getElementsByClassName(\'note-editable\')[0].innerHTML)}, 0);',
     );
     return text;
   }
-
+  
   /// Call [setText] to set current value in summernote form
   Future<void> setText(String v) async {
     String txtIsi = v
@@ -241,7 +229,7 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
     String txt =
         'document.getElementsByClassName(\'note-editable\')[0].innerHTML'
         ' = \'$txtIsi\';';
-    _webViewController!.runJavaScript(txt);
+    _webViewController.runJavaScript(txt);
   }
 
   /// [setFullContainer] to set full summernote form
@@ -252,18 +240,18 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
 
   /// [setFocus] to focus summernote form
   void setFocus() {
-    _webViewController!.runJavaScript("\$('#summernote').summernote('focus');");
+    _webViewController.runJavaScript("\$('#summernote').summernote('focus');");
   }
 
   /// [setEmpty] called to reset summmernote form
   void setEmpty() {
-    _webViewController!.runJavaScript("\$('#summernote').summernote('reset');");
+    _webViewController.runJavaScript("\$('#summernote').summernote('reset');");
   }
 
   /// [setHint] to give placeholder
   void setHint(String? text) {
     String hint = '\$(".note-placeholder").html("$text");';
-    _webViewController!.runJavaScript('setTimeout(function(){$hint}, 0);');
+    _webViewController.runJavaScript('setTimeout(function(){$hint}, 0);');
   }
 
   /// [widgetIcon] to simplify create a button icon with text
@@ -437,7 +425,7 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
   }
 
   /// [_addImage] to add image in summernote form
-  void _addImage(XFile image) async {
+  void _addImage(XFile image) {
     String filename = basename(image.path);
     List<int> imageBytes = await image.readAsBytes();
     String base64Image =
@@ -445,6 +433,6 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
         '${base64Encode(imageBytes)}" data-filename="$filename">';
 
     String txt = "\$('.note-editable').append( '$base64Image');";
-    _webViewController!.runJavaScript(txt);
+    _webViewController.runJavaScript(txt);
   }
 }
