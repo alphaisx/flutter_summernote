@@ -96,9 +96,18 @@ class FlutterSummernoteState extends State<FlutterSummernote> {
             setText(widget.value!);
           }
 
+          // Ensure webview can receive focus
+          FocusManager.instance.primaryFocus?.unfocus();
+          debugPrint('webview focusing by alpha');
+          _webViewController
+              .runJavaScript("document.body.style.webkitUserSelect='auto';");
+
           setState(() {
             _isLoading = false;
           });
+
+          setFullContainer();
+          setFocus();
         },
         onWebResourceError: (WebResourceError error) {
           debugPrint('WebView error: ${error.description}');
